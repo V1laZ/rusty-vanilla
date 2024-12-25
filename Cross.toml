@@ -6,5 +6,4 @@ pre-build = [
     "apt-get --assume-yes install libfontconfig1-dev:arm64",
     "apt-get --assume-yes install libfreetype6-dev:arm64",
     "apt-get --assume-yes install libc6-dev:arm64",
-    "export OPENSSL_DIR=/usr/"
 ]
