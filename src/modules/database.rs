@@ -1,6 +1,5 @@
 use once_cell::sync::OnceCell;
 use sqlx::{migrate::MigrateDatabase, Pool, Sqlite, SqlitePool};
-use std::error::Error;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct User {
@@ -17,7 +16,7 @@ pub enum UserError {
 
 static DB_POOL: OnceCell<Pool<Sqlite>> = OnceCell::new();
 
-pub async fn initialize_db() -> Result<(), Box<dyn Error>> {
+pub async fn initialize_db() -> Result<(), sqlx::Error> {
     const DB_URL: &str = "sqlite:database.db";
 
     if !Sqlite::database_exists(DB_URL).await.unwrap_or(false) {
@@ -26,19 +25,18 @@ pub async fn initialize_db() -> Result<(), Box<dyn Error>> {
     }
 
     let pool = SqlitePool::connect(DB_URL).await?;
-
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     DB_POOL.set(pool).expect("Failed to set DB pool");
-
     Ok(())
 }
 
-pub async fn insert_user(name: &str, osu_id: i64) -> Result<(), Box<dyn Error>> {
-    let pool = DB_POOL.get().expect("Database not initialized");
+pub async fn insert_user(dc_id: i64, name: &str, osu_id: i64) -> Result<(), sqlx::Error> {
+    let pool = DB_POOL.get().ok_or_else(|| sqlx::Error::PoolClosed)?;
 
     sqlx::query!(
-        "INSERT INTO users (name, osu_id) VALUES (?, ?)",
+        "INSERT INTO users (id, name, osu_id) VALUES (?, ?, ?)",
+        dc_id,
         name,
         osu_id
     )

@@ -82,6 +82,58 @@ impl EventHandler for Handler {
 
             handle_generate_country_lb(&ctx, &msg, &recent.beatmap_id).await;
         }
+
+        if msg.content.starts_with("!connect") {
+            let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
+
+            let osu_id = match msg_args.get(1) {
+                Some(id) => match id.parse::<i64>() {
+                    Ok(parsed_id) => parsed_id,
+                    Err(_) => {
+                        if let Err(e) = msg
+                            .reply(&ctx.http, "Invalid osu! ID. Please provide a valid number.")
+                            .await
+                        {
+                            println!("Error sending message: {:?}", e);
+                        }
+                        return;
+                    }
+                },
+                None => {
+                    if let Err(e) = msg.reply(&ctx.http, "Usage: !connect <osu_id>").await {
+                        println!("Error sending message: {:?}", e);
+                    }
+                    return;
+                }
+            };
+
+            match database::insert_user(msg.author.id.get() as i64, &msg.author.name, osu_id).await
+            {
+                Ok(_) => {
+                    if let Err(e) = msg
+                        .reply(&ctx.http, "Successfully connected your osu! account")
+                        .await
+                    {
+                        println!("Error sending message: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = match e {
+                        sqlx::Error::Database(db_error)
+                            if db_error.code() == Some("1555".into()) =>
+                        {
+                            "This Discord account is already connected to an osu! account"
+                        }
+                        _ => "An unknown error occured. Please try again later.",
+                    };
+
+                    if let Err(e) = msg.reply(&ctx.http, error_msg).await {
+                        println!("Error sending message: {:?}", e);
+                    }
+                    return;
+                }
+            }
+        }
     }
 }
 
