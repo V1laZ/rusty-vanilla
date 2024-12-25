@@ -145,6 +145,7 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
                 OsuApiError::RequestFailed(_e) => {
                     "Failed to fetch scores. Check if the beatmap ID is correct."
                 }
+                OsuApiError::NotFound(e) => &e.to_string(),
                 _ => "An unknown error occured. Please try again later.",
             };
             if let Err(e) = msg.reply(&ctx.http, error_msg).await {
@@ -153,13 +154,6 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
             return;
         }
     };
-
-    if scores.is_empty() {
-        if let Err(e) = msg.reply(&ctx.http, "No scores found").await {
-            println!("Error sending message: {:?}", e);
-        }
-        return;
-    }
 
     let beatmap_info = match fetch_beatmap_info(&beatmap_id).await {
         Ok(b) => b,

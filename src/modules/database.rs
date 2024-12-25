@@ -2,6 +2,7 @@ use once_cell::sync::OnceCell;
 use sqlx::{migrate::MigrateDatabase, Pool, Sqlite, SqlitePool};
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct User {
     id: i64,
     name: String,

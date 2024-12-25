@@ -83,7 +83,6 @@ impl fmt::Display for OsuApiError {
 
 impl Error for OsuApiError {}
 
-// Updated functions
 pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApiError> {
     let osu_session = env::var("OSU_SESSION")
         .map_err(|_| OsuApiError::MissingEnvVar("OSU_SESSION".to_string()))?;
@@ -105,9 +104,17 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApi
         .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    json::from_str::<ScoreResponse>(&response)
-        .map_err(|e| OsuApiError::ParseError(e.to_string()))
-        .map(|scores| scores.scores)
+    let scores = json::from_str::<ScoreResponse>(&response)
+        .map_err(|e| OsuApiError::ParseError(e.to_string()))?
+        .scores;
+
+    if scores.is_empty() {
+        return Err(OsuApiError::NotFound(
+            "No country scores found for this beatmap".to_string(),
+        ));
+    }
+
+    Ok(scores)
 }
 
 pub async fn fetch_beatmap_info(beatmap_id: &str) -> Result<Beatmap, OsuApiError> {
