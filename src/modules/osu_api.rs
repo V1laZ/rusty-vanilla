@@ -55,6 +55,11 @@ pub struct Beatmap {
     pub cover: Vec<u8>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct RecentScore {
+    pub beatmap_id: String,
+}
+
 #[derive(Debug)]
 pub enum OsuApiError {
     RequestFailed(String),
@@ -168,12 +173,12 @@ pub async fn get_avatars_bytes_array(scores: &Vec<Score>) -> Result<Vec<Vec<u8>>
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub async fn get_user_recent(user_id: &str) -> Result<Beatmap, OsuApiError> {
+pub async fn get_user_recent(user: &str) -> Result<RecentScore, OsuApiError> {
     let osu_api_key = env::var("OSU_API_KEY")
         .map_err(|_| OsuApiError::MissingEnvVar("OSU_API_KEY".to_string()))?;
 
     let url =
-        format!("https://osu.ppy.sh/api/get_user_recent?k={osu_api_key}&u={user_id}&m=0&limit=1");
+        format!("https://osu.ppy.sh/api/get_user_recent?k={osu_api_key}&u={user}&m=0&limit=1");
 
     let client = Client::new();
     let response = client
@@ -185,11 +190,11 @@ pub async fn get_user_recent(user_id: &str) -> Result<Beatmap, OsuApiError> {
         .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    let scores: Vec<Beatmap> =
+    let scores: Vec<RecentScore> =
         json::from_str(&response).map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
     scores
         .first()
         .cloned()
-        .ok_or_else(|| OsuApiError::NotFound(format!("No recent scores for user {}", user_id)))
+        .ok_or_else(|| OsuApiError::NotFound(format!("No recent scores for user {}", user)))
 }
