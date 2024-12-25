@@ -2,6 +2,8 @@ use reqwest::Client;
 use serde::Deserialize;
 use serenity::{all::json, futures::future::join_all};
 use std::env;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug, Deserialize)]
 struct ScoreResponse {
@@ -53,9 +55,35 @@ pub struct Beatmap {
     pub cover: Vec<u8>,
 }
 
-pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, reqwest::Error> {
-    let osu_session = env::var("OSU_SESSION").unwrap();
-    let xsrf_token = env::var("XSRF_TOKEN").unwrap();
+#[derive(Debug)]
+pub enum OsuApiError {
+    RequestFailed(String),
+    ParseError(String),
+    NotFound(String),
+    MissingEnvVar(String),
+    ImageError(String),
+}
+
+impl fmt::Display for OsuApiError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::RequestFailed(msg) => write!(f, "Request failed: {}", msg),
+            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::NotFound(msg) => write!(f, "Not found: {}", msg),
+            Self::MissingEnvVar(msg) => write!(f, "Missing environment variable: {}", msg),
+            Self::ImageError(msg) => write!(f, "Image error: {}", msg),
+        }
+    }
+}
+
+impl Error for OsuApiError {}
+
+// Updated functions
+pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApiError> {
+    let osu_session = env::var("OSU_SESSION")
+        .map_err(|_| OsuApiError::MissingEnvVar("OSU_SESSION".to_string()))?;
+    let xsrf_token =
+        env::var("XSRF_TOKEN").map_err(|_| OsuApiError::MissingEnvVar("XSRF_TOKEN".to_string()))?;
 
     let url =
         format!("https://osu.ppy.sh/beatmaps/{beatmap_id}/scores?mode=osu&type=country&limit=7");
@@ -66,60 +94,102 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, reqwes
         .header("Cookie", format!("osu_session={osu_session}"))
         .header("CSRF-TOKEN", xsrf_token)
         .send()
-        .await?
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
         .text()
-        .await?;
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    let scores: ScoreResponse = match json::from_str(&response) {
-        Ok(s) => s,
-        Err(e) => {
-            println!("Error parsing JSON: {:?}", e);
-            ScoreResponse { scores: vec![] }
-        }
-    };
-
-    Ok(scores.scores)
+    json::from_str::<ScoreResponse>(&response)
+        .map_err(|e| OsuApiError::ParseError(e.to_string()))
+        .map(|scores| scores.scores)
 }
 
-pub async fn fetch_beatmap_info(beatmap_id: &str) -> Result<Option<Beatmap>, reqwest::Error> {
-    let osu_api_key = env::var("OSU_API_KEY").unwrap();
+pub async fn fetch_beatmap_info(beatmap_id: &str) -> Result<Beatmap, OsuApiError> {
+    let osu_api_key = env::var("OSU_API_KEY")
+        .map_err(|_| OsuApiError::MissingEnvVar("OSU_API_KEY".to_string()))?;
+
     let url = format!("https://osu.ppy.sh/api/get_beatmaps?k={osu_api_key}&b={beatmap_id}&m=0");
 
     let client = Client::new();
-    let response = client.get(&url).send().await?.text().await?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    let mut beatmaps: Vec<Beatmap> = match json::from_str(&response) {
-        Ok(b) => b,
-        Err(e) => {
-            println!("Error parsing JSON: {:?}", e);
-            vec![]
-        }
-    };
+    let mut beatmaps: Vec<Beatmap> =
+        json::from_str(&response).map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
-    if let Some(beatmap) = beatmaps.first_mut() {
-        let cover_url = format!(
-            "https://assets.ppy.sh/beatmaps/{}/covers/cover.jpg",
-            beatmap.beatmapset_id
-        );
-        if let Ok(cover_response) = client.get(&cover_url).send().await {
-            if let Ok(bytes) = cover_response.bytes().await {
-                beatmap.cover = bytes.to_vec();
-            }
-        }
-        Ok(Some(beatmap.clone()))
-    } else {
-        Ok(None)
-    }
+    let beatmap = beatmaps
+        .first_mut()
+        .ok_or_else(|| OsuApiError::NotFound(format!("Beatmap {} not found", beatmap_id)))?;
+
+    let cover_url = format!(
+        "https://assets.ppy.sh/beatmaps/{}/covers/cover.jpg",
+        beatmap.beatmapset_id
+    );
+
+    let cover_bytes = client
+        .get(&cover_url)
+        .send()
+        .await
+        .map_err(|e| OsuApiError::ImageError(e.to_string()))?
+        .bytes()
+        .await
+        .map_err(|e| OsuApiError::ImageError(e.to_string()))?;
+
+    beatmap.cover = cover_bytes.to_vec();
+    Ok(beatmap.clone())
 }
 
-pub async fn get_avatars_bytes_array(scores: &Vec<Score>) -> Vec<Vec<u8>> {
+pub async fn get_avatars_bytes_array(scores: &Vec<Score>) -> Result<Vec<Vec<u8>>, OsuApiError> {
     let futures: Vec<_> = scores
         .iter()
-        .map(|s| async move {
-            let response = reqwest::get(&s.user.avatar_url).await.unwrap();
-            response.bytes().await.unwrap().to_vec()
+        .map(|s| async {
+            let response = reqwest::get(&s.user.avatar_url)
+                .await
+                .map_err(|e| OsuApiError::ImageError(e.to_string()))?;
+
+            response
+                .bytes()
+                .await
+                .map_err(|e| OsuApiError::ImageError(e.to_string()))
+                .map(|b| b.to_vec())
         })
         .collect();
 
-    join_all(futures).await
+    join_all(futures)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+}
+
+pub async fn get_user_recent(user_id: &str) -> Result<Beatmap, OsuApiError> {
+    let osu_api_key = env::var("OSU_API_KEY")
+        .map_err(|_| OsuApiError::MissingEnvVar("OSU_API_KEY".to_string()))?;
+
+    let url =
+        format!("https://osu.ppy.sh/api/get_user_recent?k={osu_api_key}&u={user_id}&m=0&limit=1");
+
+    let client = Client::new();
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
+
+    let scores: Vec<Beatmap> =
+        json::from_str(&response).map_err(|e| OsuApiError::ParseError(e.to_string()))?;
+
+    scores
+        .first()
+        .cloned()
+        .ok_or_else(|| OsuApiError::NotFound(format!("No recent scores for user {}", user_id)))
 }

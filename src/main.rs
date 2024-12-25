@@ -33,40 +33,57 @@ impl EventHandler for Handler {
                 }
             };
 
-            let mut scores = match fetch_country_scores(&beatmap_id).await {
+            let scores = match fetch_country_scores(&beatmap_id).await {
                 Ok(s) => s,
                 Err(e) => {
-                    println!("Error fetching scores: {:?}", e);
-                    vec![]
+                    let error_msg = match e {
+                        modules::osu_api::OsuApiError::RequestFailed(e) => {
+                            "Failed to fetch scores. Check if the beatmap ID is correct."
+                        }
+                        _ => "An unknown error occured. Please try again later.",
+                    };
+                    if let Err(e) = msg.reply(&ctx.http, error_msg).await {
+                        println!("Error sending message: {:?}", e);
+                    }
+                    return;
                 }
             };
 
-            if scores.len() == 0 {
+            if scores.is_empty() {
                 if let Err(e) = msg.reply(&ctx.http, "No scores found").await {
                     println!("Error sending message: {:?}", e);
                 }
                 return;
             }
 
-            scores.truncate(7);
-
             let beatmap_info = match fetch_beatmap_info(&beatmap_id).await {
-                Ok(b) => match b {
-                    Some(beatmap) => beatmap,
-                    None => {
-                        if let Err(e) = msg.reply(&ctx.http, "Beatmap not found").await {
-                            println!("Error sending message: {:?}", e);
-                        }
-                        return;
-                    }
-                },
+                Ok(b) => b,
                 Err(e) => {
-                    println!("Error fetching beatmap info: {:?}", e);
+                    let error_msg = match e {
+                        modules::osu_api::OsuApiError::RequestFailed(e) => {
+                            "Failed to fetch beatmap info. Check if the beatmap ID is correct."
+                        }
+                        _ => "An unknown error occured. Please try again later.",
+                    };
+                    if let Err(e) = msg.reply(&ctx.http, error_msg).await {
+                        println!("Error sending message: {:?}", e);
+                    }
                     return;
                 }
             };
 
-            let avatars = get_avatars_bytes_array(&scores).await;
+            let avatars = match get_avatars_bytes_array(&scores).await {
+                Ok(a) => a,
+                Err(e) => {
+                    let error_msg = match e {
+                        _ => "An unknown error occured. Please try again later.",
+                    };
+                    if let Err(e) = msg.reply(&ctx.http, error_msg).await {
+                        println!("Error sending message: {:?}", e);
+                    }
+                    return;
+                }
+            };
 
             let table = generate_leaderboard(scores, avatars, &beatmap_info);
 
@@ -93,6 +110,7 @@ impl EventHandler for Handler {
 async fn main() {
     dotenv().ok();
     let dc_token = env::var("BOT_TOKEN").expect("Missing Discord bot token");
+
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let mut client = Client::builder(&dc_token, intents)
