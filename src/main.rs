@@ -48,7 +48,13 @@ impl EventHandler for Handler {
             let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
 
             let user_arg = match msg_args.last() {
-                Some(u) => u,
+                Some(u) => {
+                    if u == &"-l" {
+                        ""
+                    } else {
+                        u
+                    }
+                }
                 None => "",
             };
 
