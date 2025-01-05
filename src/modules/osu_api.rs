@@ -174,18 +174,12 @@ async fn get_client_credentials_token() -> Result<String, OsuApiError> {
         ])
         .send()
         .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(OsuApiError::RequestFailed(format!(
-            "Failed to get token: {}",
-            response.status()
-        )));
-    }
-
-    let token_response = response
-        .json::<TokenResponse>()
-        .await
+    let token_response = json::from_str::<TokenResponse>(&response)
         .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
     Ok(token_response.access_token)
@@ -207,18 +201,12 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApi
         .header("X-CSRF-Token", xsrf_token)
         .send()
         .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(OsuApiError::RequestFailed(format!(
-            "Failed to fetch country scores: {}",
-            response.status()
-        )));
-    }
-
-    let scores = response
-        .json::<ScoreResponse>()
-        .await
+    let scores = json::from_str::<ScoreResponse>(&response)
         .map_err(|e| OsuApiError::ParseError(e.to_string()))?
         .scores;
 
@@ -314,19 +302,13 @@ pub async fn get_user_id(user: &str) -> Result<String, OsuApiError> {
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(OsuApiError::RequestFailed(format!(
-            "Failed to get user id: {}",
-            response.status()
-        )));
-    }
-
-    let user = response
-        .json::<User>()
-        .await
-        .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
+    let user =
+        json::from_str::<User>(&response).map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
     Ok(user.id.to_string())
 }
@@ -355,17 +337,12 @@ pub async fn get_user_recent(user: &str) -> Result<RecentScore, OsuApiError> {
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
+        .text()
+        .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(OsuApiError::RequestFailed(format!(
-            "Failed to get user recent score: {}",
-            response.status()
-        )));
-    }
-    let scores = response
-        .json::<Vec<RecentScore>>()
-        .await
+    let scores = json::from_str::<Vec<RecentScore>>(&response)
         .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
     scores
