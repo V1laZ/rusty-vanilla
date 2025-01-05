@@ -2,12 +2,11 @@ mod modules;
 
 use modules::database;
 use modules::generate_lb::generate_leaderboard;
-use modules::osu_api::{
-    fetch_beatmap_info, fetch_country_scores, get_avatars_bytes_array, get_user_recent, OsuApiError,
-};
+use modules::osu_api;
 
 use dotenvy::dotenv;
 use std::env;
+use std::sync::Mutex;
 
 use serenity::all::{CreateAttachment, CreateMessage, Ready};
 use serenity::async_trait;
@@ -23,10 +22,15 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
+        if !msg.content.starts_with("!") {
+            return;
+        }
+
         if msg.content.starts_with("!cs") {
+            osu_api::handle_legacy_score_only(&msg.content).await;
             let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
 
-            let beatmap_id = match msg_args.get(1) {
+            let beatmap_id = match msg_args.last() {
                 Some(id) => id,
                 None => {
                     if let Err(e) = msg.reply(&ctx.http, "Usage: !cs <beatmap_id>").await {
@@ -40,9 +44,10 @@ impl EventHandler for Handler {
         }
 
         if msg.content.starts_with("!rsc") {
+            osu_api::handle_legacy_score_only(&msg.content).await;
             let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
 
-            let user_arg = match msg_args.get(1) {
+            let user_arg = match msg_args.last() {
                 Some(u) => u,
                 None => "",
             };
@@ -66,11 +71,11 @@ impl EventHandler for Handler {
                 false => user_arg.to_string(),
             };
 
-            let recent = match get_user_recent(&user).await {
+            let recent = match osu_api::get_user_recent(&user).await {
                 Ok(r) => r,
                 Err(e) => {
                     let error_msg = match e {
-                        OsuApiError::NotFound(e) => &e.to_string(),
+                        osu_api::OsuApiError::NotFound(e) => &e.to_string(),
                         _ => "An unknown error occured. Please try again later.",
                     };
                     if let Err(e) = msg.reply(&ctx.http, error_msg).await {
@@ -86,7 +91,7 @@ impl EventHandler for Handler {
         if msg.content.starts_with("!connect") {
             let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
 
-            let osu_id = match msg_args.get(1) {
+            let osu_id = match msg_args.last() {
                 Some(id) => match id.parse::<i64>() {
                     Ok(parsed_id) => parsed_id,
                     Err(_) => {
@@ -138,14 +143,14 @@ impl EventHandler for Handler {
 }
 
 async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &str) {
-    let scores = match fetch_country_scores(&beatmap_id).await {
+    let scores = match osu_api::fetch_country_scores(&beatmap_id).await {
         Ok(s) => s,
         Err(e) => {
             let error_msg = match e {
-                OsuApiError::RequestFailed(_e) => {
+                osu_api::OsuApiError::RequestFailed(_e) => {
                     "Failed to fetch scores. Check if the beatmap ID is correct."
                 }
-                OsuApiError::NotFound(e) => &e.to_string(),
+                osu_api::OsuApiError::NotFound(e) => &e.to_string(),
                 _ => "An unknown error occured. Please try again later.",
             };
             if let Err(e) = msg.reply(&ctx.http, error_msg).await {
@@ -155,11 +160,11 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
         }
     };
 
-    let beatmap_info = match fetch_beatmap_info(&beatmap_id).await {
+    let beatmap_info = match osu_api::fetch_beatmap_info(&beatmap_id).await {
         Ok(b) => b,
         Err(e) => {
             let error_msg = match e {
-                OsuApiError::RequestFailed(_e) => {
+                osu_api::OsuApiError::RequestFailed(_e) => {
                     "Failed to fetch beatmap info. Check if the beatmap ID is correct."
                 }
                 _ => "An unknown error occured. Please try again later.",
@@ -171,7 +176,7 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
         }
     };
 
-    let avatars = match get_avatars_bytes_array(&scores).await {
+    let avatars = match osu_api::get_avatars_bytes_array(&scores).await {
         Ok(a) => a,
         Err(e) => {
             let error_msg = match e {
@@ -205,8 +210,17 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
 
 #[tokio::main]
 async fn main() {
+    osu_api::LEGACY_SCORE_ONLY.get_or_init(|| Mutex::new(true));
     dotenv().ok();
     let dc_token = env::var("BOT_TOKEN").expect("Missing Discord bot token");
+
+    match osu_api::set_legacy_score_only(true).await {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{}", e);
+            return;
+        }
+    }
 
     if let Err(e) = database::initialize_db().await {
         println!("Failed to initialize database: {}", e);

@@ -4,6 +4,7 @@ use serenity::{all::json, futures::future::join_all};
 use std::env;
 use std::error::Error;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Deserialize)]
 struct ScoreResponse {
@@ -12,6 +13,7 @@ struct ScoreResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct Score {
+    pub classic_total_score: i64,
     pub legacy_total_score: i64,
     pub ended_at: String,
     pub rank: String,
@@ -83,6 +85,67 @@ impl fmt::Display for OsuApiError {
 
 impl Error for OsuApiError {}
 
+pub static LEGACY_SCORE_ONLY: OnceLock<Mutex<bool>> = OnceLock::new();
+
+pub async fn handle_legacy_score_only(msg: &str) {
+    let msg_args = msg.split_whitespace().collect::<Vec<&str>>();
+    let has_lazer_flag = msg_args.contains(&"-l");
+
+    let should_update = {
+        let legacy_lock = LEGACY_SCORE_ONLY.get().unwrap();
+        let legacy_state = legacy_lock.lock().unwrap();
+        has_lazer_flag == *legacy_state
+    };
+
+    if !should_update {
+        return;
+    }
+
+    if let Ok(_) = set_legacy_score_only(!has_lazer_flag).await {
+        let legacy_lock = LEGACY_SCORE_ONLY.get().unwrap();
+        let mut legacy_state = legacy_lock.lock().unwrap();
+        *legacy_state = !has_lazer_flag;
+    }
+}
+
+pub fn get_legacy_score_only_status() -> bool {
+    let legacy_lock = LEGACY_SCORE_ONLY.get().unwrap();
+    let legacy_state = legacy_lock.lock().unwrap();
+    *legacy_state
+}
+
+pub async fn set_legacy_score_only(value: bool) -> Result<(), OsuApiError> {
+    let osu_session = env::var("OSU_SESSION")
+        .map_err(|_| OsuApiError::MissingEnvVar("OSU_SESSION".to_string()))?;
+    let xsrf_token =
+        env::var("XSRF_TOKEN").map_err(|_| OsuApiError::MissingEnvVar("XSRF_TOKEN".to_string()))?;
+
+    let url = format!(
+        "https://osu.ppy.sh/home/account/options?user_profile_customization[legacy_score_only]={}",
+        value as i32
+    );
+
+    let client = Client::new();
+    let response = client
+        .put(url)
+        .header("Cookie", format!("osu_session={osu_session}"))
+        .header("X-CSRF-Token", xsrf_token)
+        .header("Content-Length", "0")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .send()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(OsuApiError::RequestFailed(format!(
+            "Failed to set legacy score only: {}",
+            response.status()
+        )))
+    }
+}
+
 pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApiError> {
     let osu_session = env::var("OSU_SESSION")
         .map_err(|_| OsuApiError::MissingEnvVar("OSU_SESSION".to_string()))?;
@@ -96,7 +159,7 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApi
     let response = client
         .get(&url)
         .header("Cookie", format!("osu_session={osu_session}"))
-        .header("CSRF-TOKEN", xsrf_token)
+        .header("X-CSRF-Token", xsrf_token)
         .send()
         .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?

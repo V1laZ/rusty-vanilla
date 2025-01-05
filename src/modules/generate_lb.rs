@@ -1,4 +1,4 @@
-use super::osu_api::{Beatmap, Score};
+use super::osu_api::{get_legacy_score_only_status, Beatmap, Score};
 use skia_safe::{
     surfaces, BlendMode, Canvas, Color, Data, EncodedImageFormat, Font, FontMgr, Image, Matrix,
     Paint, Path, Point, Rect,
@@ -264,8 +264,14 @@ pub fn generate_leaderboard(
 
     draw_background(canvas, &beatmap_info.cover, CANVAS_WIDTH, canvas_height);
 
+    let use_legacy_score = get_legacy_score_only_status();
     leaderboard.iter().enumerate().for_each(|(i, score)| {
         let row_y = PADDING + i as f32 * CELL_HEIGHT;
+        let score_to_show = if use_legacy_score {
+            score.legacy_total_score
+        } else {
+            score.classic_total_score
+        };
 
         draw_profile_image(&mut canvas, avatars[i].clone(), PADDING, row_y, 70.0, 10.0);
 
@@ -292,7 +298,7 @@ pub fn generate_leaderboard(
         draw_score_with_combo(
             &mut canvas,
             &default_font,
-            score.legacy_total_score,
+            score_to_show,
             score.max_combo,
             &beatmap_info.max_combo,
             PADDING + 80.0,
