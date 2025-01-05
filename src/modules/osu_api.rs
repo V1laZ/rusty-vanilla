@@ -41,6 +41,7 @@ pub struct Mod {
 
 #[derive(Debug, Deserialize)]
 pub struct User {
+    pub id: i64,
     pub username: String,
     pub avatar_url: String,
 }
@@ -58,8 +59,18 @@ pub struct Beatmap {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct RecetScoreBeatmap {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct RecentScore {
-    pub beatmap_id: String,
+    pub beatmap: RecetScoreBeatmap,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
 }
 
 #[derive(Debug)]
@@ -146,6 +157,40 @@ pub async fn set_legacy_score_only(value: bool) -> Result<(), OsuApiError> {
     }
 }
 
+async fn get_client_credentials_token() -> Result<String, OsuApiError> {
+    let client_id =
+        env::var("CLIENT_ID").map_err(|_| OsuApiError::MissingEnvVar("CLIENT_ID".to_string()))?;
+    let client_secret = env::var("CLIENT_SECRET")
+        .map_err(|_| OsuApiError::MissingEnvVar("CLIENT_SECRET".to_string()))?;
+
+    let client = Client::new();
+    let response = client
+        .post("https://osu.ppy.sh/oauth/token")
+        .form(&[
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("grant_type", "client_credentials".to_string()),
+            ("scope", "public".to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(OsuApiError::RequestFailed(format!(
+            "Failed to get token: {}",
+            response.status()
+        )));
+    }
+
+    let token_response = response
+        .json::<TokenResponse>()
+        .await
+        .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
+
+    Ok(token_response.access_token)
+}
+
 pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApiError> {
     let osu_session = env::var("OSU_SESSION")
         .map_err(|_| OsuApiError::MissingEnvVar("OSU_SESSION".to_string()))?;
@@ -162,12 +207,18 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApi
         .header("X-CSRF-Token", xsrf_token)
         .send()
         .await
-        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
-        .text()
-        .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    let scores = json::from_str::<ScoreResponse>(&response)
+    if !response.status().is_success() {
+        return Err(OsuApiError::RequestFailed(format!(
+            "Failed to fetch country scores: {}",
+            response.status()
+        )));
+    }
+
+    let scores = response
+        .json::<ScoreResponse>()
+        .await
         .map_err(|e| OsuApiError::ParseError(e.to_string()))?
         .scores;
 
@@ -243,25 +294,79 @@ pub async fn get_avatars_bytes_array(scores: &Vec<Score>) -> Result<Vec<Vec<u8>>
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub async fn get_user_recent(user: &str) -> Result<RecentScore, OsuApiError> {
-    let osu_api_key = env::var("OSU_API_KEY")
-        .map_err(|_| OsuApiError::MissingEnvVar("OSU_API_KEY".to_string()))?;
+pub async fn get_user_id(user: &str) -> Result<String, OsuApiError> {
+    if let Ok(id) = user.parse::<i64>() {
+        return Ok(id.to_string());
+    }
 
-    let url =
-        format!("https://osu.ppy.sh/api/get_user_recent?k={osu_api_key}&u={user}&m=0&limit=1");
+    let token = match get_client_credentials_token().await {
+        Ok(t) => t,
+        Err(e) => {
+            return Err(e);
+        }
+    };
+
+    let url = format!("https://osu.ppy.sh/api/v2/users/{user}");
 
     let client = Client::new();
     let response = client
         .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
         .send()
-        .await
-        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?
-        .text()
         .await
         .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
 
-    let scores: Vec<RecentScore> =
-        json::from_str(&response).map_err(|e| OsuApiError::ParseError(e.to_string()))?;
+    if !response.status().is_success() {
+        return Err(OsuApiError::RequestFailed(format!(
+            "Failed to get user id: {}",
+            response.status()
+        )));
+    }
+
+    let user = response
+        .json::<User>()
+        .await
+        .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
+
+    Ok(user.id.to_string())
+}
+
+pub async fn get_user_recent(user: &str) -> Result<RecentScore, OsuApiError> {
+    let token = match get_client_credentials_token().await {
+        Ok(t) => t,
+        Err(e) => {
+            return Err(e);
+        }
+    };
+
+    let user_id = match get_user_id(user).await {
+        Ok(id) => id,
+        Err(e) => {
+            return Err(e);
+        }
+    };
+
+    let url =
+        format!("https://osu.ppy.sh/api/v2/users/{user_id}/scores/recent?limit=1&include_fails=1");
+
+    let client = Client::new();
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| OsuApiError::RequestFailed(e.to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(OsuApiError::RequestFailed(format!(
+            "Failed to get user recent score: {}",
+            response.status()
+        )));
+    }
+    let scores = response
+        .json::<Vec<RecentScore>>()
+        .await
+        .map_err(|e| OsuApiError::ParseError(e.to_string()))?;
 
     scores
         .first()

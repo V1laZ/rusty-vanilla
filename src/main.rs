@@ -49,7 +49,7 @@ impl EventHandler for Handler {
 
             let user_arg = match msg_args.last() {
                 Some(u) => {
-                    if u == &"-l" {
+                    if u == &"-l" || u == &"!rsc" {
                         ""
                     } else {
                         u
@@ -91,7 +91,7 @@ impl EventHandler for Handler {
                 }
             };
 
-            handle_generate_country_lb(&ctx, &msg, &recent.beatmap_id).await;
+            handle_generate_country_lb(&ctx, &msg, &recent.beatmap.id.to_string()).await;
         }
 
         if msg.content.starts_with("!connect") {
