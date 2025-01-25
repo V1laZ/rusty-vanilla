@@ -49,7 +49,10 @@ impl EventHandler for Handler {
 
             let user_arg = match msg_args.last() {
                 Some(last) => {
-                    if last.starts_with('-') || *last == "!rsc" {
+                    let last_index = msg_args.len() - 1;
+                    if last_index > 0 && msg_args[last_index - 1] == "-m" {
+                        ""
+                    } else if last.starts_with('-') || *last == "!rsc" {
                         ""
                     } else {
                         last
