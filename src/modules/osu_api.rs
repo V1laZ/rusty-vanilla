@@ -192,7 +192,7 @@ pub async fn fetch_country_scores(beatmap_id: &str) -> Result<Vec<Score>, OsuApi
         env::var("XSRF_TOKEN").map_err(|_| OsuApiError::MissingEnvVar("XSRF_TOKEN".to_string()))?;
 
     let url =
-        format!("https://osu.ppy.sh/beatmaps/{beatmap_id}/scores?mode=osu&type=country&limit=7");
+        format!("https://osu.ppy.sh/beatmaps/{beatmap_id}/scores?mode=osu&type=country&limit=99");
 
     let client = Client::new();
     let response = client

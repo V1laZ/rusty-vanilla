@@ -149,7 +149,7 @@ impl EventHandler for Handler {
 }
 
 async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &str) {
-    let scores = match osu_api::fetch_country_scores(&beatmap_id).await {
+    let mut scores = match osu_api::fetch_country_scores(&beatmap_id).await {
         Ok(s) => s,
         Err(e) => {
             let error_msg = match e {
@@ -165,6 +165,51 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
             return;
         }
     };
+
+    let msg_tokens = msg.content.split(" ").collect::<Vec<&str>>();
+    let mut mods = String::new();
+
+    for (i, token) in msg_tokens.iter().enumerate() {
+        if *token == "-m" && i + 1 < msg_tokens.len() {
+            mods = msg_tokens[i + 1].to_string().to_uppercase();
+            break;
+        }
+    }
+
+    if !mods.is_empty() {
+        let valid_mods = vec!["HD", "HR", "DT", "NC", "FL", "EZ", "HT", "SO", "NF"];
+        let filter_mods = get_mods_without_cl(&mods);
+
+        let invalid_mods: Vec<&String> = filter_mods
+            .iter()
+            .filter(|chunk| !valid_mods.contains(&chunk.as_str()))
+            .collect();
+
+        if !invalid_mods.is_empty() {
+            if let Err(e) = msg
+                .reply(&ctx.http, format!("Invalid mods {:?}", invalid_mods))
+                .await
+            {
+                println!("Error sending message: {:?}", e);
+            }
+            return;
+        }
+
+        scores.retain(|score| {
+            let score_mods = score
+                .mods
+                .iter()
+                .map(|m| m.acronym.clone())
+                .collect::<Vec<String>>()
+                .join("");
+
+            let mods_without_cl = get_mods_without_cl(&score_mods);
+
+            mods_without_cl == filter_mods
+        });
+    }
+
+    scores.truncate(7);
 
     let beatmap_info = match osu_api::fetch_beatmap_info(&beatmap_id).await {
         Ok(b) => b,
@@ -212,6 +257,15 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
     if let Err(e) = msg.channel_id.send_message(&ctx.http, msg_builder).await {
         println!("Error sending message: {:?}", e);
     }
+}
+
+fn get_mods_without_cl(mods: &str) -> std::collections::HashSet<String> {
+    mods.chars()
+        .collect::<Vec<char>>()
+        .chunks(2)
+        .map(|c| c.iter().collect::<String>())
+        .filter(|s| s != "CL")
+        .collect()
 }
 
 #[tokio::main]
