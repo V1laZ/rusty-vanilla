@@ -48,11 +48,11 @@ impl EventHandler for Handler {
             let msg_args: Vec<&str> = msg.content.split_whitespace().collect();
 
             let user_arg = match msg_args.last() {
-                Some(u) => {
-                    if u == &"-l" || u == &"!rsc" {
+                Some(last) => {
+                    if last.starts_with('-') || *last == "!rsc" {
                         ""
                     } else {
-                        u
+                        last
                     }
                 }
                 None => "",
@@ -207,6 +207,16 @@ async fn handle_generate_country_lb(ctx: &Context, msg: &Message, beatmap_id: &s
 
             mods_without_cl == filter_mods
         });
+
+        if scores.is_empty() {
+            if let Err(e) = msg
+                .reply(&ctx.http, "No scores found with the specified mods")
+                .await
+            {
+                println!("Error sending message: {:?}", e);
+            }
+            return;
+        }
     }
 
     scores.truncate(7);
